@@ -91,3 +91,9 @@ jobs:
         run: |
           gh release create "$GITHUB_REF_NAME" dist/* \
             --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes
+
+  verify-release:
+    needs: release
+    uses: ./.github/workflows/verify-release.yml
+    with:
+      tag: ${{ github.ref_name }}
