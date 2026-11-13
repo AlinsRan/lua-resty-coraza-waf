@@ -38,7 +38,7 @@ else ifeq ($(wildcard $(PREBUILT)),)
 endif
 
 build:
-	cd go && CGO_ENABLED=1 $(GO) build -trimpath -buildmode=c-shared \
+	cd go && CGO_ENABLED=1 $(GO) build -trimpath -buildvcs=false -buildmode=c-shared \
 		-tags $(GO_TAGS) -o $(abspath $(OUTPUT_NAME)) .
 	rm -f $(basename $(OUTPUT_NAME)).h
 
