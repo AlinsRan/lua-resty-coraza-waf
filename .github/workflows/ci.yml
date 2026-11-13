@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build in manylinux_2_28 (glibc 2.28)
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src \
+            quay.io/pypa/manylinux_2_28_${{ matrix.arch }} ci/build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coraza_waf-${{ matrix.arch }}
+          path: prebuilt/coraza_waf-${{ matrix.arch }}.so
+          if-no-files-found: error
+
+  smoke:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, aarch64]
+        image: ["ubuntu:24.04", "ubuntu:22.04", "debian:bookworm", "rockylinux:9"]
+    runs-on: ${{ matrix.arch == 'aarch64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: coraza_waf-${{ matrix.arch }}
+          path: prebuilt
+      - run: ci/smoke.sh "${{ matrix.image }}" prebuilt/coraza_waf-${{ matrix.arch }}.so
+
+  package:
+    needs: smoke
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: coraza_waf-*
+          path: prebuilt
+          merge-multiple: true
+      - name: Pack
+        id: pack
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            version=${GITHUB_REF#refs/tags/v}
+          else
+            version=0.0.0
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          ci/package.sh "$version"
+      - run: ci/luarocks-test.sh "${{ steps.pack.outputs.version }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: package
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes
